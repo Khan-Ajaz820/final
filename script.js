@@ -9,7 +9,7 @@ const inputCtx = inputCanvas.getContext("2d");
 const outputContainer = document.getElementById("mosaicContainer"); // <div id="mosaicContainer"></div>
 
 // === Settings ===
-const tileSize = 12; // adjust tile size if needed
+const tileSize = 8; // adjust tile size if needed
 let imageLoaded = false;
 
 // STEP 2 — Convert emoji file names → actual emoji characters
