@@ -74,7 +74,7 @@ results = results.map(filenameToEmoji);
 console.log("✅ Converted Emoji Example:", results.slice(0, 10)); // should show actual emojis
 
 // === Step 5: render (we will replace SVG later)
-renderFromResults(results, cols, rows, tileSize, 0.80);
+renderFromResults(results, cols, rows, tileSize, 0.83);
 
     console.log("✅ Mosaic generated successfully!");
   };
