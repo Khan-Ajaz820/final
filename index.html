@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+  <html lang="en">
+  <head>
+<!-- Cropper.js (for drag crop) -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
+
+<!-- GLFX (WebGL HDR / unsharpMask) -->
+<script src="https://evanw.github.io/glfx.js/glfx.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+<link rel="preload" href="https://pub-158fe245ad374907b7bb850980fbef49.r2.dev/Noto-COLRv1.ttf" as="font" type="font/ttf" crossorigin>
+    <style>
+
+@font-face {
+  font-family: 'NotoEmoji';
+  src: url('https://pub-158fe245ad374907b7bb850980fbef49.r2.dev/Noto-COLRv1.ttf')
+       format('truetype');
+  font-display: swap;
+  font-weight: 400;
+  font-style: normal;
+}
+      
+
+      
+      #outputCanvas {
+        width: 600px;
+        height: auto;
+      }
+
+       #inputCanvas {
+        display: none; /* or limit size if you show it */
+      }
+
+    </style>
+  </head>
+<body>
+  <h2>Emoji Mosaic Generator</h2>
+
+
+  <input type="file" id="imageUpload" accept="image/*">
+  <br><br>
+
+  <canvas id="inputCanvas" style="display:none;"></canvas>
+
+  <div id="mosaicContainer"
+       style="display:grid;grid-gap:0;background:#fff;justify-content:center;">
+  </div>
+  
+<button id="downloadBtn">Download PNG</button>
+
+  <script src="wasm_glue.js"></script>
+  <script src="script.js"></script>
+  
+<style>
+  /* Minimal modal (dark theme) */
+  #preCropModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);
+    backdrop-filter:blur(8px);z-index:9999;align-items:center;justify-content:center}
+  #preCropBox{background:#1f1f1f;border-radius:10px;padding:12px;max-width:95vw;max-height:95vh}
+  #preCropImage{max-width:90vw;max-height:80vh}
+  #preCropDone{margin-top:10px;padding:10px 22px;border-radius:8px;cursor:pointer}
+</style>
+
+<!-- Preprocess modal -->
+<div id="preCropModal" role="dialog" aria-modal="true">
+  <div id="preCropBox">
+    <img id="preCropImage" alt="Crop this image"/>
+    <div style="text-align:center">
+      <button id="preCropDone">Done ✅</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/**
+ * Preprocess: manual crop (fixed ratio), warm tone, GLFX HDR (unsharpMask).
+ * Returns a Promise<Canvas>.
+ */
+window.preprocessEmojiEnhance = function preprocessEmojiEnhance(file, {
+  portraitWidth = 1080,
+  portraitHeight = 1354,
+  toneBrightness = 0.8,
+  toneRGBA = 'rgba(244,233,50,0.26)', // warm amber
+  unsharpRadius = 53,
+  unsharpStrength = 2.9,
+  finalFilter = 'brightness(1.18) contrast(1.05)',
+  overlaySrc = '' // optional
+} = {}) {
+  return new Promise((resolve, reject) => {
+    const $modal = document.getElementById('preCropModal');
+    const $img = document.getElementById('preCropImage');
+    const $btn = document.getElementById('preCropDone');
+    let cropper;
+
+    const url = URL.createObjectURL(file);
+    $img.src = url;
+    $modal.style.display = 'flex';
+
+    const cleanup = () => {
+      if (cropper) { cropper.destroy(); cropper = null; }
+      URL.revokeObjectURL(url);
+      $modal.style.display = 'none';
+    };
+
+    setTimeout(() => {
+      cropper = new Cropper($img, {
+        aspectRatio: portraitWidth / portraitHeight,
+        viewMode: 1,
+        background: false,
+        cropBoxMovable: true,
+        cropBoxResizable: false,
+        movable: false,
+        scalable: false,
+        zoomable: true,
+        dragMode: 'none',
+        ready() {
+          const container = cropper.getContainerData();
+          const boxW = container.width * 0.95;
+          const boxH = boxW * (portraitHeight / portraitWidth);
+          cropper.setCropBoxData({
+            width: boxW, height: boxH,
+            left: (container.width - boxW) / 2,
+            top: (container.height - boxH) / 2
+          });
+
+          const img = cropper.getImageData();
+          const scaleW = boxW / img.naturalWidth;
+          const scaleH = boxH / img.naturalHeight;
+          cropper.zoomTo(Math.max(scaleW, scaleH));
+        }
+      });
+    }, 0);
+
+    $btn.onclick = async () => {
+      try {
+        // 1) Crop to fixed size
+        const cropped = cropper.getCroppedCanvas({ width: portraitWidth, height: portraitHeight });
+
+        // 2) Warm tone on temp canvas
+        const temp = document.createElement('canvas');
+        temp.width = portraitWidth; temp.height = portraitHeight;
+        const tctx = temp.getContext('2d');
+        tctx.filter = `brightness(${toneBrightness})`;
+        tctx.drawImage(cropped, 0, 0);
+        tctx.globalCompositeOperation = 'multiply';
+        tctx.fillStyle = toneRGBA;
+        tctx.fillRect(0, 0, temp.width, temp.height);
+        tctx.globalCompositeOperation = 'source-over';
+        tctx.filter = 'none';
+
+        // 3) HDR via GLFX unsharpMask
+        if (!window.fx || !fx.canvas) throw new Error('GLFX not available (WebGL?)');
+        const fxCanvas = fx.canvas();
+        const texture = fxCanvas.texture(temp);
+        fxCanvas.draw(texture).unsharpMask(unsharpRadius, unsharpStrength).update();
+
+        // 4) Draw to final canvas
+        const out = document.createElement('canvas');
+        out.width = portraitWidth; out.height = portraitHeight;
+        const octx = out.getContext('2d');
+        octx.drawImage(fxCanvas, 0, 0, out.width, out.height);
+
+        // optional overlay
+// (optional) overlay
+// (optional) overlay (will use preloaded image if available)
+if (window.__overlayImage && overlaySrc) {
+  octx.globalCompositeOperation = 'overlay';
+  octx.globalAlpha = 1.00; // Strength control
+  octx.drawImage(window.__overlayImage, 0, 0, out.width, out.height);
+  octx.globalAlpha = 1.0;
+  octx.globalCompositeOperation = 'source-over';
+}
+
+        // final filter polish
+        if (finalFilter) {
+          const snap = new Image();
+          snap.onload = () => {
+            octx.filter = finalFilter;
+            octx.drawImage(snap, 0, 0, out.width, out.height);
+            octx.filter = 'none';
+            cleanup();
+            resolve(out);
+          };
+          snap.src = out.toDataURL('image/png');
+        } else {
+          cleanup();
+          resolve(out);
+        }
+      } catch (e) {
+        cleanup();
+        reject(e);
+      }
+    };
+  });
+};
+
+
+// === PRELOAD OVERLAY IMAGE ===
+window.__overlayImage = null;
+(function preloadOverlay(){
+  const overlay = new Image();
+  overlay.crossOrigin = "anonymous"; // important for CDN
+  overlay.src = "https://pub-158fe245ad374907b7bb850980fbef49.r2.dev/overlay.png"; // ← replace this
+  overlay.onload = () => {
+    window.__overlayImage = overlay;
+    console.log("✅ Overlay image preloaded");
+  };
+})();
+
+</script>
+  
+</body>
+  </html>
